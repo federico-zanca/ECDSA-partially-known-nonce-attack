@@ -1,5 +1,7 @@
+#!/usr/bin/sage
 from sage.all import *
 from Crypto.Hash import SHA256
+import json
 
 def ecdsa_init():
     # Elliptic curve SECP256K1
@@ -11,24 +13,46 @@ def ecdsa_init():
     Q = d * G # public key
     return p,GF(p),E,n,G,d,Q
 
-def leaky_ecdsa_sign(m, d, G, type, leak_size):
+def ecdsa_verify(r, s, m, G, d, Q):
+    Zn = Zmod(G.order())
+    h = int(SHA256.new(m.encode()).hexdigest(), 16)
+    w = inverse_mod(s, G.order())
+    u1 = int(Zn(h * w))
+    u2 = int(Zn(r * w))
+    P = u1 * G + u2 * Q
+    return r == int(Zn(P.xy()[0]))
+
+def ecdsa_sign(m, d, G):
     Zn = Zmod(G.order())
     n = G.order()
     h = int(SHA256.new(m.encode()).hexdigest(), 16)
-    k = randint(1, 2^128-1)
-    r = Zn((k * G).xy()[0])
+    k = randrange(n)
+
+    r = int(Zn((k * G).xy()[0]))
     assert r != 0
     s = int(Zn(inverse_mod(k, n) * (h + r * d)))
     assert s != 0
 
-    if type == 'MSB': #4 MSB of number, represented in 256 bits
-        leak = int(k) >> (256-leak_size)
+    return r, s
+
+def leaky_ecdsa_sign(m, d, G, type, leak_size, Q):
+    Zn = Zmod(G.order())
+    n = G.order()
+    h = int(SHA256.new(m.encode()).hexdigest(), 16)
+    k = randrange(n)
+    assert(k > 0 and k < n)
+    r = int(Zn((k * G).xy()[0]))
+    assert r != 0
+    s = int(Zn(inverse_mod(k, n) * (h + r * d)))
+    assert s != 0
+
+    assert ecdsa_verify(r, s, m, G, d, d*G)
     return r, s, k
 
-def generate_signatures(G, d, num_signatures, type, m, leak_size):
+def generate_signatures(G, d, num_signatures, type, m, leak_size, Q):
     signatures = []
     for i in range(num_signatures):
-        r,s,k = leaky_ecdsa_sign(m, d, G, type, leak_size)
+        r,s,k = leaky_ecdsa_sign(m, d, G, type, leak_size, Q)
         if type == 'MSB':
             leak = k >> (256 - leak_size)
         else:  # LSB
@@ -36,27 +60,28 @@ def generate_signatures(G, d, num_signatures, type, m, leak_size):
         signatures.append({"r": r,"s": s, "k": k, "leak": leak, "h": int(SHA256.new(m.encode()).hexdigest(), 16)})
     return signatures
 
-def construct_lattice(sigs, n, leak_size, type, message):
+def construct_lattice(sigs, n, leak_size, type):
     m = len(sigs)
     Zn = Zmod(n)
-    #h = int(SHA256.new(message.encode()).hexdigest(), 16)
-    factor = 2^leak_size
+    factor = 2^(leak_size+1)
     shifter = 2^(256-leak_size)
-    #B = matrix(ZZ, m+2, m+2)
     if type == 'MSB':
-        B = [[0]*i + [factor*n] + [0]*(m-i+1) for i in range(m)]  # matrix m x m+2 all zeros except for the diagonal
-        t = [int(Zn(factor*sigs[i]["r"]/sigs[i]["s"])) for i in range(m)] + [1, 0]
-        u = [int(Zn(factor*(sigs[i]["leak"]*shifter)*sigs[i]["h"]/sigs[i]["s"])) for i in range(m)] + [0, n]
-        B.append(t)
-        B.append(u)
-
-        print("\n\nLunghezze   ")
-        for row in B:
-            print(len(row))
+        B = matrix(ZZ, m+2, m+2)
+        for i in range(m):
+            r = Zn(sigs[i]["r"])
+            s_inv = inverse_mod(sigs[i]["s"], n)
+            h = sigs[i]["h"]
+            leak = sigs[i]["leak"]
+            B[i, i] = factor*n
+            B[m, i] = factor*(int(r*s_inv))
+            #assert(int(Zn(r*inverse_mod(sigs[i]["s"], n)))  == int(Zn(sigs[i]["r"]*inverse_mod(sigs[i]["s"], n))))
+            B[m+1, i] = factor*(leak*shifter - h*s_inv) + n
+        B[m, m] = 1
+        B[m+1, m+1] = n
     else:  # LSB
         pass
 
-    return Matrix(B)
+    return B
 
 def reduce_lattice(B, block_size):
     if block_size is None:
@@ -65,47 +90,49 @@ def reduce_lattice(B, block_size):
     print("BKZ with block size {}".format(block_size))
     return B.BKZ(block_size=block_size,  auto_abort = True)
 
-def test_result(B, Q, n, d, G):
+def get_key(B, Q, n, G):
     Zn = Zmod(n)
+    print("Official public key: {}".format(Q))  
     for row in B:
-        candidate = Zn(row[-2])
-        if candidate > 0:
-            alternative = n - candidate
-            if Q == candidate*G:
-                print("Found private key: {}".format(hex(candidate)))
-                return candidate
-            elif Q == alternative*G:
-                print("Found private key: {}".format(hex(alternative)))
-                return alternative
+        potential_key = int(row[-2]) % n
+        if potential_key > 0:
+            if Q == potential_key*G:
+                return potential_key
+            elif Q == Zn(-potential_key)*G:
+                return Zn(-potential_key)   
     return 0
 def attack():
     p, F ,E, n, G, d, Q = ecdsa_init()
+    priv_key = d
     print("Elliptic curve SECP256K1")
     print("Order of G n = {}".format(hex(n)))
     print("Private Key d = {}".format(hex(d)))
 
     assert(E.is_on_curve(Q[0],Q[1])) # sanity check
     assert(G.order() == n) # sanity check
-
+    assert (d*G == Q) # sanity check
     message = "Do electric sheep dream of androids?"
 
     type = "MSB"
-    leak_size = 6
-    print("{leak_size} most significant bits of every signature's nonce are leaked")
+    leak_size = 4
+    print(f"{leak_size} most significant bits of every signature's nonce are leaked")
 
-    num_signatures = ceil((1.03 * (4/3) * (256/leak_size)) + 1)
-    signatures = generate_signatures(G, d, num_signatures, type, message, leak_size)
+    num_signatures = int(1.03 * (4/3) * (256/leak_size))
+    signatures = generate_signatures(G, d, num_signatures, type, message, leak_size, Q)
+
     print("Generated {} signatures".format(num_signatures))
+    B = construct_lattice(signatures, n, leak_size, type)
 
-    B = construct_lattice(signatures, n, leak_size, type, message)
+    block_sizes = [None, 15, 25, 40, 50, 60]
 
-    recovery = [None, 15, 25, 40, 50, 60]
-    for effort in recovery:
-        reduced = reduce_lattice(B, effort)
-        res = test_result(reduced, Q, n, d, G)
-        if res :
+    for block_size in block_sizes:
+        reduced = reduce_lattice(B, block_size)
+        found = get_key(reduced, Q, n, G)
+        if found :
+            print("private key recovered: ", hex(found))
+            r, s = ecdsa_sign("I find your lack of faith disturbing", found, G)
+            assert(ecdsa_verify(r, s, "I find your lack of faith disturbing", G, found, Q))
             print("SUCCESS")
-            print(res)
             break
         else:
             print("FAILED")
