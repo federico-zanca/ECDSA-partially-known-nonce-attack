@@ -64,8 +64,8 @@ def construct_lattice(sigs, n, leak_size, type):
     m = len(sigs)
     Zn = Zmod(n)
     factor = 2^(leak_size+1)
-    shifter = 2^(256-leak_size)
     if type == 'MSB':
+        shifter = 2^(256-leak_size)
         B = matrix(ZZ, m+2, m+2)
         for i in range(m):
             r = Zn(sigs[i]["r"])
@@ -78,8 +78,19 @@ def construct_lattice(sigs, n, leak_size, type):
             B[m+1, i] = factor*(leak*shifter - h*s_inv) + n
         B[m, m] = 1
         B[m+1, m+1] = n
-    else:  # LSB
-        pass
+    elif type == "LSB":  # LSB
+        B = matrix(ZZ, m+2, m+2)
+        shifter = inverse_mod(2^leak_size,n)
+        for i in range(m):
+            r = Zn(sigs[i]["r"])
+            s_inv = inverse_mod(sigs[i]["s"], n)
+            h = sigs[i]["h"]
+            leak = sigs[i]["leak"]
+            B[i, i] = factor*n
+            B[m, i] = factor*(int(shifter*r*s_inv))
+            B[m+1, i] = factor*int(shifter*(leak - h*s_inv)) + n
+        B[m, m] = 1
+        B[m+1, m+1] = n
 
     return B
 
@@ -92,7 +103,7 @@ def reduce_lattice(B, block_size):
 
 def get_key(B, Q, n, G):
     Zn = Zmod(n)
-    print("Official public key: {}".format(Q))  
+    #print("Official public key: {}".format(Q))  
     for row in B:
         potential_key = int(row[-2]) % n
         if potential_key > 0:
@@ -113,11 +124,12 @@ def attack():
     assert (d*G == Q) # sanity check
     message = "Do electric sheep dream of androids?"
 
-    type = "MSB"
+    type = "LSB"
     leak_size = 4
-    print(f"{leak_size} most significant bits of every signature's nonce are leaked")
+    print(f"{leak_size} {type} of every signature's nonce are leaked")
 
     num_signatures = int(1.03 * (4/3) * (256/leak_size))
+    #num_signatures = int(2 * (4/3) * (256/leak_size))
     signatures = generate_signatures(G, d, num_signatures, type, message, leak_size, Q)
 
     print("Generated {} signatures".format(num_signatures))
