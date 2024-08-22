@@ -10,6 +10,7 @@ def ecdsa_init():
     G = E.gens()[0] # generator
     n = G.order() # order of G
     d = randrange(n)  # private key
+    #d = 0x98311e01fd153a667fbb55180f908723c44f2e23609a3b1593b9b482647cfc97
     Q = d * G # public key
     return p,GF(p),E,n,G,d,Q
 
@@ -57,7 +58,7 @@ def generate_signatures(G, d, num_signatures, type, m, leak_size, Q):
         leak_end = leak_size[1]
         for i in range(2):
             r,s,k = leaky_ecdsa_sign(m, d, G)
-            leak = int(bin(k)[2:].ljust(256, '0')[leak_beginning:leak_end+1], 2)
+            leak = (k >> (256-leak_end)) % (2^(leak_end - leak_beginning))
             signatures.append({"r": r,"s": s, "k": k, "leak": leak, "h": h})
     else:
         for i in range(num_signatures):
@@ -72,8 +73,8 @@ def generate_signatures(G, d, num_signatures, type, m, leak_size, Q):
 def construct_lattice(sigs, n, leak_size, type):
     m = len(sigs)
     Zn = Zmod(n)
-    factor = 2^(leak_size+1)
     if type == 'MSB':
+        factor = 2^(leak_size+1)
         shifter = 2^(256-leak_size)
         B = matrix(ZZ, m+2, m+2)
         for i in range(m):
@@ -88,6 +89,7 @@ def construct_lattice(sigs, n, leak_size, type):
         B[m, m] = 1
         B[m+1, m+1] = n
     elif type == "LSB":  # LSB
+        factor = 2^(leak_size+1)
         B = matrix(ZZ, m+2, m+2)
         shifter = inverse_mod(2^leak_size,n)
         for i in range(m):
@@ -100,11 +102,11 @@ def construct_lattice(sigs, n, leak_size, type):
             B[m+1, i] = factor*int(shifter*(leak - h*s_inv)) + n
         B[m, m] = 1
         B[m+1, m+1] = n
-    elif type == "Middle bits":
-        r1 = Zn(sigs[0]["r"])
-        s1 = Zn(sigs[0]["s"])
-        r2 = Zn(sigs[1]["r"])
-        s2 = Zn(sigs[1]["s"])
+    elif type == "Middle":
+        r1 = int(sigs[0]["r"])
+        s1 = int(sigs[0]["s"])
+        r2 = int(sigs[1]["r"])
+        s2 = int(sigs[1]["s"])
         h1 = sigs[0]["h"]
         h2 = sigs[1]["h"]
         leak1 = sigs[0]["leak"] << (256-leak_size[1])
@@ -114,8 +116,8 @@ def construct_lattice(sigs, n, leak_size, type):
         l = 256 - leak_beginning
         K = 2^(max(leak_beginning, 256-leak_end))
 
-        t = -inverse_mod(s1, n)*s2*r1*inverse_mod(r2, n)
-        u = inverse_mod(s1, n)*r1*h2*inverse_mod(r2, n) - inverse_mod(s1, n)*h1
+        t = -int(inverse_mod(s1, n)*s2*r1*inverse_mod(r2, n))
+        u = int(inverse_mod(s1, n)*r1*h2*inverse_mod(r2, n) - inverse_mod(s1, n)*h1)
         u_new = leak1 + t*leak2 + u
 
         B = matrix(ZZ, 5, 5)
@@ -149,6 +151,7 @@ def get_key_msb_lsb(B, Q, n, G, K):
     return 0
 
 def solve_system(B, signatures, leak_size, n, G):
+    #print(B)
     Zn = Zmod(n)
     r1, s1 = signatures[0]["r"], signatures[0]["s"]
     r2, s2 = signatures[1]["r"], signatures[1]["s"]
@@ -160,7 +163,7 @@ def solve_system(B, signatures, leak_size, n, G):
     leak2 = signatures[1]["leak"] << (256-leak_size[1])
     l = 256 - leak_beginning
     K = 2^(max(leak_beginning, 256-leak_end))
-
+    
     t = -inverse_mod(s1, n)*s2*r1*inverse_mod(r2, n)
     u = inverse_mod(s1, n)*r1*h2*inverse_mod(r2, n) - inverse_mod(s1, n)*h1
     u_new = leak1 + t*leak2 + u
@@ -169,10 +172,11 @@ def solve_system(B, signatures, leak_size, n, G):
     b = []
     equation_index = 0
     for v in B[:-1]:
-        eq_system[equation_index] = [x//K for x in v[:4]]
-        b.append(-v[4])
+        if not v.is_zero():
+            eq_system[equation_index] = [x//K for x in v[:4]]
+            b.append(-v[4])
+            equation_index += 1
 
-    assert(len(b) == 4)
     """
     x -> LSB recovered
     y -> MSB recovered
@@ -205,12 +209,12 @@ def attack():
     message = "Do electric sheep dream of androids?"
 
     type = "Middle"
-    leak_size = [10,246]
+    leak_size = [63,204]
 
     if(type == "Middle"):
         num_signatures = 2
         assert(isinstance(leak_size, list))
-        assert(leak_size[1]<256 and leak_size[0] >= 0)  
+        assert(leak_size[1]<=256 and leak_size[0] >= 0)  
         assert(leak_size[0] < leak_size[1])
         K = 2^(max(leak_size[0], 256-leak_size[1]))
     else:
@@ -219,9 +223,17 @@ def attack():
     #num_signatures = int(2 * (4/3) * (256/leak_size))
     signatures = generate_signatures(G, d, num_signatures, type, message, leak_size, Q)
 
+
+    #signatures = [{'r': 28186663909599447448242908343195383754739544468589047292007445881584505656548, 's': 100785034628958815763353864611369594920571416766933546882560322186090134550281, 'k': 91118959352845533321617240716720435745639878119840761023367187173474394683306, 'leak': 88865796350754552232181131294212705281159914852414356388706721561156077, 'h': 51388323098256365211112112737002316525598586665757483952636648147810362652144}, {'r': 36617321506654250176639590237730086032577404500449021162290388406100914418084, 's': 9206658350676329088450776104813177716412395781601295737908884495978972337660, 'k': 69977028379646791866009901536263510039818374244012836919504590091205972371583, 'leak': 92473899933725451495428502812106349423565580848003796756661736015893546, 'h': 51388323098256365211112112737002316525598586665757483952636648147810362652144}]
+
+    sig1 = signatures[0]
+    sig2 = signatures[1]
+    print("LEAK_SIZE = ",leak_size)
+    print(signatures)
+
     print(f"{leak_size} {type} of every signature's nonce are leaked")
     print("Generated {} signatures".format(num_signatures))
-
+  
     B = construct_lattice(signatures, n, leak_size, type)
 
     block_sizes = [None, 15, 20, 25, 30, 40, 50, 60, num_signatures]
