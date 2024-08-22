@@ -101,7 +101,32 @@ def construct_lattice(sigs, n, leak_size, type):
         B[m, m] = 1
         B[m+1, m+1] = n
     elif type == "Middle bits":
-        pass
+        r1 = Zn(sigs[0]["r"])
+        s1 = Zn(sigs[0]["s"])
+        r2 = Zn(sigs[1]["r"])
+        s2 = Zn(sigs[1]["s"])
+        h1 = sigs[0]["h"]
+        h2 = sigs[1]["h"]
+        leak1 = sigs[0]["leak"] << (256-leak_size[1])
+        leak2 = sigs[1]["leak"] << (256-leak_size[1])
+        leak_beginning = leak_size[0]
+        leak_end = leak_size[1]
+        l = 256 - leak_beginning
+        K = 2^(max(leak_beginning, 256-leak_end))
+
+        t = -inverse_mod(s1, n)*s2*r1*inverse_mod(r2, n)
+        u = inverse_mod(s1, n)*r1*h2*inverse_mod(r2, n) - inverse_mod(s1, n)*h1
+        u_new = leak1 + t*leak2 + u
+
+        B = matrix(ZZ, 5, 5)
+        B[0] = vector(ZZ, [K, K * 2^l, K * t, K * t * 2^l, u_new])
+        for i in range(1,4):
+            B[i] = vector(ZZ, [0]*i + [K*n] + [0]*(4-i))
+        B[4] = vector(ZZ, [0, 0, 0, 0, n])
+        
+    else:
+        print("Invalid leak type")
+        exit()
     return B
 
 def reduce_lattice(B, block_size):
@@ -136,12 +161,18 @@ def attack():
 
     type = "LSB"
     leak_size = 3
-    print(f"{leak_size} {type} of every signature's nonce are leaked")
 
-    num_signatures = int(1.5 * (4/3) * (256/leak_size))
+    if(type == "Middle"):
+        num_signatures = 2
+        assert(isinstance(leak_size, list))
+        assert(leak_size[1]<256 and leak_size[0] >= 0)  
+        assert(leak_size[0] < leak_size[1])
+    else:
+        num_signatures = int(1.5 * (4/3) * (256/leak_size))
     #num_signatures = int(2 * (4/3) * (256/leak_size))
     signatures = generate_signatures(G, d, num_signatures, type, message, leak_size, Q)
 
+    print(f"{leak_size} {type} of every signature's nonce are leaked")
     print("Generated {} signatures".format(num_signatures))
     B = construct_lattice(signatures, n, leak_size, type)
 
