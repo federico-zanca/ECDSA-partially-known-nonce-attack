@@ -123,7 +123,7 @@ def construct_lattice(sigs, n, leak_size, type):
         for i in range(1,4):
             B[i] = vector(ZZ, [0]*i + [K*n] + [0]*(4-i))
         B[4] = vector(ZZ, [0, 0, 0, 0, n])
-        
+
     else:
         print("Invalid leak type")
         exit()
@@ -136,17 +136,62 @@ def reduce_lattice(B, block_size):
     print("BKZ with block size {}".format(block_size))
     return B.BKZ(block_size=block_size,  auto_abort = True)
 
-def get_key(B, Q, n, G):
+def get_key_msb_lsb(B, Q, n, G, K):
     Zn = Zmod(n)
     #print("Official public key: {}".format(Q))  
-    for row in B:
-        potential_key = int(row[-2]) % n
+    for v in B:
+        potential_key = int(v[-2]) % n
         if potential_key > 0:
             if Q == potential_key*G:
                 return potential_key
             elif Q == Zn(-potential_key)*G:
                 return Zn(-potential_key)   
     return 0
+
+def solve_system(B, signatures, leak_size, n, G):
+    Zn = Zmod(n)
+    r1, s1 = signatures[0]["r"], signatures[0]["s"]
+    r2, s2 = signatures[1]["r"], signatures[1]["s"]
+    h1, h2 = signatures[0]["h"], signatures[1]["h"]
+
+    leak_beginning = leak_size[0]
+    leak_end = leak_size[1]
+    leak1 = signatures[0]["leak"] << (256-leak_size[1])
+    leak2 = signatures[1]["leak"] << (256-leak_size[1])
+    l = 256 - leak_beginning
+    K = 2^(max(leak_beginning, 256-leak_end))
+
+    t = -inverse_mod(s1, n)*s2*r1*inverse_mod(r2, n)
+    u = inverse_mod(s1, n)*r1*h2*inverse_mod(r2, n) - inverse_mod(s1, n)*h1
+    u_new = leak1 + t*leak2 + u
+
+    eq_system = Matrix(ZZ, 4, 4)
+    b = []
+    equation_index = 0
+    for v in B[:-1]:
+        eq_system[equation_index] = [x//K for x in v[:4]]
+        b.append(-v[4])
+
+    assert(len(b) == 4)
+    """
+    x -> LSB recovered
+    y -> MSB recovered
+    """
+    x1, y1, x2, y2 = eq_system.solve_right(vector(ZZ, b))
+    assert(Zn(x1 + 2^l*y1 + t*x2 + t*2^l*y2 + u_new) == 0)
+
+    k1 = y1*(2^l) + leak1 + x1
+    k2 = y2*(2^l) + leak2 + x2
+    print("k1: ", k1)
+    print("k2: ", k2)
+
+    priv_key1 = Zn(inverse_mod(r1, n)*(s1*k1 - h1))
+    priv_key2 = Zn(inverse_mod(r2, n)*(s2*k2 - h2))
+
+    assert(priv_key1 == priv_key2)
+    return int(priv_key1)
+
+
 def attack():
     p, F ,E, n, G, d, Q = ecdsa_init()
     priv_key = d
@@ -159,28 +204,35 @@ def attack():
     assert (d*G == Q) # sanity check
     message = "Do electric sheep dream of androids?"
 
-    type = "LSB"
-    leak_size = 3
+    type = "Middle"
+    leak_size = [10,246]
 
     if(type == "Middle"):
         num_signatures = 2
         assert(isinstance(leak_size, list))
         assert(leak_size[1]<256 and leak_size[0] >= 0)  
         assert(leak_size[0] < leak_size[1])
+        K = 2^(max(leak_size[0], 256-leak_size[1]))
     else:
         num_signatures = int(1.5 * (4/3) * (256/leak_size))
+        K = None
     #num_signatures = int(2 * (4/3) * (256/leak_size))
     signatures = generate_signatures(G, d, num_signatures, type, message, leak_size, Q)
 
     print(f"{leak_size} {type} of every signature's nonce are leaked")
     print("Generated {} signatures".format(num_signatures))
+
     B = construct_lattice(signatures, n, leak_size, type)
 
     block_sizes = [None, 15, 20, 25, 30, 40, 50, 60, num_signatures]
 
     for block_size in block_sizes:
         reduced = reduce_lattice(B, block_size)
-        found = get_key(reduced, Q, n, G)
+        if type == "Middle":
+            found = solve_system(reduced, signatures, leak_size, n, G)
+        else: # LSB or MSB
+            found = get_key_msb_lsb(reduced, Q, n, G)
+
         if found :
             print("private key recovered: ", hex(found))
             r, s = ecdsa_sign("I find your lack of faith disturbing", found, G)
