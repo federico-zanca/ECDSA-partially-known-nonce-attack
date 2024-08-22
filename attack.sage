@@ -35,7 +35,7 @@ def ecdsa_sign(m, d, G):
 
     return r, s
 
-def leaky_ecdsa_sign(m, d, G, type, leak_size, Q):
+def leaky_ecdsa_sign(m, d, G):
     Zn = Zmod(G.order())
     n = G.order()
     h = int(SHA256.new(m.encode()).hexdigest(), 16)
@@ -51,13 +51,22 @@ def leaky_ecdsa_sign(m, d, G, type, leak_size, Q):
 
 def generate_signatures(G, d, num_signatures, type, m, leak_size, Q):
     signatures = []
-    for i in range(num_signatures):
-        r,s,k = leaky_ecdsa_sign(m, d, G, type, leak_size, Q)
-        if type == 'MSB':
-            leak = k >> (256 - leak_size)
-        else:  # LSB
-            leak = k % (2^leak_size)
-        signatures.append({"r": r,"s": s, "k": k, "leak": leak, "h": int(SHA256.new(m.encode()).hexdigest(), 16)})
+    h = int(SHA256.new(m.encode()).hexdigest(), 16)
+    if type == "Middle":
+        leak_beginning = leak_size[0]
+        leak_end = leak_size[1]
+        for i in range(2):
+            r,s,k = leaky_ecdsa_sign(m, d, G)
+            leak = int(bin(k)[2:].ljust(256, '0')[leak_beginning:leak_end+1], 2)
+            signatures.append({"r": r,"s": s, "k": k, "leak": leak, "h": h})
+    else:
+        for i in range(num_signatures):
+            r,s,k = leaky_ecdsa_sign(m, d, G)
+            if type == 'MSB':
+                leak = k >> (256 - leak_size)
+            else:  # LSB
+                leak = k % (2^leak_size)
+            signatures.append({"r": r,"s": s, "k": k, "leak": leak, "h": h})
     return signatures
 
 def construct_lattice(sigs, n, leak_size, type):
@@ -91,7 +100,8 @@ def construct_lattice(sigs, n, leak_size, type):
             B[m+1, i] = factor*int(shifter*(leak - h*s_inv)) + n
         B[m, m] = 1
         B[m+1, m+1] = n
-
+    elif type == "Middle bits":
+        pass
     return B
 
 def reduce_lattice(B, block_size):
@@ -125,17 +135,17 @@ def attack():
     message = "Do electric sheep dream of androids?"
 
     type = "LSB"
-    leak_size = 4
+    leak_size = 3
     print(f"{leak_size} {type} of every signature's nonce are leaked")
 
-    num_signatures = int(1.03 * (4/3) * (256/leak_size))
+    num_signatures = int(1.5 * (4/3) * (256/leak_size))
     #num_signatures = int(2 * (4/3) * (256/leak_size))
     signatures = generate_signatures(G, d, num_signatures, type, message, leak_size, Q)
 
     print("Generated {} signatures".format(num_signatures))
     B = construct_lattice(signatures, n, leak_size, type)
 
-    block_sizes = [None, 15, 25, 40, 50, 60]
+    block_sizes = [None, 15, 20, 25, 30, 40, 50, 60, num_signatures]
 
     for block_size in block_sizes:
         reduced = reduce_lattice(B, block_size)
