@@ -137,7 +137,7 @@ def reduce_lattice(B, block_size):
     print("BKZ with block size {}".format(block_size))
     return B.BKZ(block_size=block_size,  auto_abort = True)
 
-def get_key_msb_lsb(B, Q, n, G, K):
+def get_key_msb_lsb(B, Q, n, G):
     Zn = Zmod(n)
     #print("Official public key: {}".format(Q))  
     for v in B:
@@ -210,6 +210,9 @@ def attack():
     type = "Middle"
     leak_size = [60,204]
 
+    type = "LSB"
+    leak_size = 5
+    
     if(type == "Middle"):
         num_signatures = 2
         assert(isinstance(leak_size, list))
@@ -225,7 +228,7 @@ def attack():
     sig1 = signatures[0]
     sig2 = signatures[1]
     print("LEAK_SIZE = ",leak_size)
-    print(signatures)
+    #print(signatures)
 
     print(f"{leak_size} {type} of every signature's nonce are leaked")
     print("Generated {} signatures".format(num_signatures))
@@ -233,7 +236,7 @@ def attack():
     B = construct_lattice(signatures, n, leak_size, type)
 
     block_sizes = [None, 15, 20, 25, 30, 40, 50, 60, num_signatures]
-
+    
     for block_size in block_sizes:
         reduced = reduce_lattice(B, block_size)
         if type == "Middle":
