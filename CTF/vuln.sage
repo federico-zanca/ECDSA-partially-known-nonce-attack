@@ -10,6 +10,7 @@ n = G.order() # order of G
 d = 0xfedefedefedefedefedefedefedefedefedefedefedefedefedefedefedead0  # private key
 Q = d * G # public key
 
+FLAG = "flag{j0lly_r0g3r}"
 
 def leaky_ecdsa_sign(m, d, G, type, leak_size):
     h = int(SHA256.new(m.encode()).hexdigest(), 16)
@@ -49,11 +50,27 @@ def ecdsa_verify(m, Q, r, s, G):
     R = mod(xy.xy()[0] , n)
     return R == r
 
+def translate(type):
+    if type == '1':
+        return 'MSB'
+    elif type == '2':
+        return 'LSB'
+    else:
+        return 'middle bits'
+
+def getDefaultLeakSize(type):
+    if type == 'MSB':
+        return 5
+    elif type == 'LSB':
+        return 5
+    else:  # Middle 
+        return [96, 160]
+
 
 menu = """
 1. Sign message (leaky!)
 2. Verify signature
-3. Sign with your private key ;P
+Choose wisely: 
 """
 
 options = """
@@ -73,18 +90,25 @@ if __name__ == '__main__':
         
         choice = input(menu)
         if choice == '1':
-            type = input(options + "\nWhat do you want to know about the nonce? ")
+            type = translate(input(options + "\nWhat do you want to know about the nonce? "))
             m = input("Message: ")
-            sig = leaky_ecdsa_sign(m, d, G, type)
-            print(f"Signature: {sig}")
+
+            leak_size = getDefaultLeakSize(type)
+
+            sig = leaky_ecdsa_sign(m, d, G, type, leak_size)
+            print(f"Signature: \nr = {hex(sig[0])} \ns = {hex(sig[1])} \nLeaked {leak_size} {type}: {sig[2]}")
+            type = translate(type)
+
         elif choice == '2':
             m = input("Message: ")
             r = int(input("r: "), 16)
             s = int(input("s: "), 16)
             if ecdsa_verify(m, Q, r, s, G):
                 print("Signature verified")
+                print("Flag: ", FLAG)
             else:
                 print("Invalid signature")
+            """
         elif choice == '3':
             m = input("Message: ")
             priv = input("Private key: ")
@@ -95,6 +119,8 @@ if __name__ == '__main__':
             
             sig = ecdsa_sign(m, priv, G)
             print(f"Signature: {sig}")
+
+            """
         else:
             break
     
