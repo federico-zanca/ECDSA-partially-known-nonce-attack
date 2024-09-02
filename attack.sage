@@ -185,8 +185,8 @@ def solve_system(B, signatures, leak_size, n, G):
 
     k1 = y1*(2^l) + leak1 + x1
     k2 = y2*(2^l) + leak2 + x2
-    print("k1: ", k1)
-    print("k2: ", k2)
+    print("k1: ", hex(k1))
+    print("k2: ", hex(k2))
 
     priv_key1 = Zn(inverse_mod(r1, n)*(s1*k1 - h1))
     priv_key2 = Zn(inverse_mod(r2, n)*(s2*k2 - h2))
@@ -194,6 +194,43 @@ def solve_system(B, signatures, leak_size, n, G):
     assert(priv_key1 == priv_key2)
     return int(priv_key1)
 
+
+def set_parameters():
+    while(True):
+        print("Choose what you want to be leaked")
+        print("1. MSB")
+        print("2. LSB")
+        print("3. Middle bits")
+        choice = int(input("> "))
+        if choice == 1:
+            type = "MSB"
+            break
+        elif choice == 2:
+            type = "LSB"
+            break
+        elif choice == 3:
+            type = "Middle"
+            break
+        else:
+            print("Invalid choice")
+        
+    print("Enter the size of the leak for the signatures\nNotice that it is strongly recommended to leak at least 128 bits for this attack to work")
+    if type == "Middle":
+        print("Beginning of the leak (0-255)")
+        leak_beginning = int(input("> "))
+        print(f"End of the leak ({leak_beginning}-255)")
+        leak_end = int(input("> "))
+        leak_size = [leak_beginning, leak_end]
+    else:
+        while(True):
+            leak_size = int(input(f"Number of {type} to be leaked\n> "))
+            if(leak_size <= 3):
+                print("Leak size too small, the attack won't work")
+            elif(leak_size >= 256):
+                print("Seriously?")
+            else:   
+                break
+    return type, leak_size
 
 def attack():
     p, F ,E, n, G, d, Q = ecdsa_init()
@@ -210,9 +247,8 @@ def attack():
     type = "Middle"
     leak_size = [60,204]
 
-    type = "LSB"
-    leak_size = 5
-    
+    type, leak_size = set_parameters()
+
     if(type == "Middle"):
         num_signatures = 2
         assert(isinstance(leak_size, list))
@@ -220,13 +256,13 @@ def attack():
         assert(leak_size[0] < leak_size[1])
         K = 2^(max(leak_size[0], 256-leak_size[1]))
     else:
-        num_signatures = int(1.5 * (4/3) * (256/leak_size))
+        num_signatures = int(1.3 * (4/3) * (256/leak_size))
+        num_signatures = int(2 * (256/leak_size))
+        #num_signatures = int(4/3 * 256/leak_size) 
         K = None
     #num_signatures = int(2 * (4/3) * (256/leak_size))
     signatures = generate_signatures(G, d, num_signatures, type, message, leak_size, Q)
 
-    sig1 = signatures[0]
-    sig2 = signatures[1]
     print("LEAK_SIZE = ",leak_size)
     #print(signatures)
 
@@ -234,24 +270,32 @@ def attack():
     print("Generated {} signatures".format(num_signatures))
   
     B = construct_lattice(signatures, n, leak_size, type)
-
-    block_sizes = [None, 15, 20, 25, 30, 40, 50, 60, num_signatures]
-    
-    for block_size in block_sizes:
-        reduced = reduce_lattice(B, block_size)
+    if(type == "Middle"):
+        reduced = reduce_lattice(B, None)
         if type == "Middle":
-            found = solve_system(reduced, signatures, leak_size, n, G)
-        else: # LSB or MSB
+            try:
+                found = solve_system(reduced, signatures, leak_size, n, G)
+                print("private key recovered: ", hex(found))
+                r, s = ecdsa_sign("I find your lack of faith disturbing", found, G)
+                assert(ecdsa_verify(r, s, "I find your lack of faith disturbing", G, found, Q))
+                print("SUCCESS")
+            except:
+                print("System has no solution\nFAILED")
+
+    else:
+        block_sizes = [None, 15, 20, 25, 30, 40, 50, 60, num_signatures]
+        for block_size in block_sizes:
+            reduced = reduce_lattice(B, block_size)
+            # LSB or MSB
             found = get_key_msb_lsb(reduced, Q, n, G)
 
-        if found :
-            print("private key recovered: ", hex(found))
-            r, s = ecdsa_sign("I find your lack of faith disturbing", found, G)
-            assert(ecdsa_verify(r, s, "I find your lack of faith disturbing", G, found, Q))
-            print("SUCCESS")
-            break
-        else:
-            print("FAILED")
-
+            if found :
+                print("private key recovered: ", hex(found))
+                r, s = ecdsa_sign("I find your lack of faith disturbing", found, G)
+                assert(ecdsa_verify(r, s, "I find your lack of faith disturbing", G, found, Q))
+                print("SUCCESS")
+                break
+            else:
+                print("FAILED")
 attack()                            
     
