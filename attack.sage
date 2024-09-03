@@ -71,6 +71,7 @@ def generate_signatures(G, d, num_signatures, type, m, leak_size, Q):
 def construct_lattice(sigs, n, leak_size, type):
     m = len(sigs)
     Zn = Zmod(n)
+    """
     if type == 'MSB':
         factor = 2^(leak_size+1)
         shifter = 2^(256-leak_size)
@@ -86,6 +87,29 @@ def construct_lattice(sigs, n, leak_size, type):
             B[m+1, i] = factor*(leak*shifter - h*s_inv) + n
         B[m, m] = 1
         B[m+1, m+1] = n
+    """
+    if type == "MSB":
+        shifter = 2^(256-leak_size)
+        rm = Zn(sigs[m-1]["r"])
+        rm_inv = inverse_mod(int(rm), n)
+        sm = Zn(sigs[m-1]["s"])
+        sm_inv = inverse_mod(int(sm), n)
+        leak_m = sigs[m-1]["leak"]
+        hm = sigs[m-1]["h"]
+        B = matrix(ZZ, m+1, m+1)
+        for i in range(m):
+            r = Zn(sigs[i]["r"])
+            s_inv = inverse_mod(sigs[i]["s"], n)
+            h = sigs[i]["h"]
+            leak = sigs[i]["leak"]
+            t = int(-s_inv*sm*r*rm_inv)
+            u = int(s_inv*r*hm*rm_inv - s_inv*h)
+            B[i ,i] = n 
+            B[m-1, i] = t
+            B[m, i] = u + t*(shifter*leak_m) + shifter*                               leak
+        B[m-1, m-1] = 1
+        B[m, m] = n
+        
     elif type == "LSB":  # LSB
         factor = 2^(leak_size+1)
         B = matrix(ZZ, m+2, m+2)
@@ -234,6 +258,19 @@ def choose_atk_params():
                 break
     return type, leak_size
 
+def msb_experimental(B, Q, n, G, signatures, leak_size):
+    Zn = Zmod(n)
+    for i in range(len(signatures)):
+        s = int(signatures[i]["s"])
+        r = int(signatures[i]["r"])
+        h = int(signatures[i]["h"])
+        k = abs(B[-1][i]) + signatures[i]["leak"]*(2^(256-leak_size))
+        if(int(k)==int(signatures[i]["k"])):
+            return int(Zn((s*k-h)*inverse_mod(r, n)))                 
+    return 0
+    
+    
+
 def attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs):
     p, F ,E, n, G = ecdsa_init()
     
@@ -299,15 +336,14 @@ def attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs):
 
     if(type == "Middle"):
         reduced = reduce_lattice(B, None)
-        if type == "Middle":
-            try:
-                found = solve_system(reduced, signatures, leak_size, n, G)
-                print("private key recovered: ", hex(found))
-                r, s = ecdsa_sign("I find your lack of faith disturbing", found, G)
-                assert(ecdsa_verify(r, s, "I find your lack of faith disturbing", G, found, Q))
-                print("SUCCESS")
-            except:
-                print("System has no solution\nFAILED")
+        try:
+            found = solve_system(reduced, signatures, leak_size, n, G)
+            print("private key recovered: ", hex(found))
+            r, s = ecdsa_sign("I find your lack of faith disturbing", found, G)
+            assert(ecdsa_verify(r, s, "I find your lack of faith disturbing", G, found, Q))
+            print("SUCCESS")
+        except:
+            print("System has no solution\nFAILED")
     else:  # LSB or MSB
         block_sizes = [None, 15, 20, 25, 30, 40, 50, 60, num_signatures]
         for block_size in block_sizes:
@@ -322,6 +358,21 @@ def attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs):
                 break
             else:
                 print("FAILED")
+    """
+    elif type=="MSB":
+        block_sizes = [None, 15, 20, 25, 30, 40, 50, 60, num_signatures]
+        for block_size in block_sizes:
+            reduced = reduce_lattice(B, block_size)
+            found = msb_experimental(reduced, Q, n, G, signatures, leak_size)
+            if found :
+                print("private key recovered: ", hex(found))
+                r, s = ecdsa_sign("I find your lack of faith disturbing", found, G)
+                assert(ecdsa_verify(r, s, "I find your lack of faith disturbing", G, found, Q))
+                print("SUCCESS")
+                break
+            else:
+                print("FAILED")
+    """
 
 if __name__ == "__main__":
     print("ECDSA Lattice attacks playground")
