@@ -172,8 +172,51 @@ def get_key_msb_lsb(B, Q, n, G):
                 return Zn(-potential_key)   
     return 0
 
-def solve_system(B, signatures, leak_size, n, G):
+def alternative_system_solver_middle_bits(B, signatures, leak_size, n, G, X): # Not better than the other implementation
     #print(B)
+    r1, s1, h1 = signatures[0]["r"], signatures[0]["s"], signatures[0]["h"]
+    r2, s2, h2 = signatures[1]["r"], signatures[1]["s"], signatures[1]["h"]
+
+    Zn = Zmod(n)
+    leak_beginning = leak_size[0]
+    leak_end = leak_size[1]
+    t = -inverse_mod(s1, n)*s2*r1*inverse_mod(r2, n)
+    u = inverse_mod(s1, n)*r1*h2*inverse_mod(r2, n) - inverse_mod(s1, n)*h1
+    leak1 = signatures[0]["leak"] << (256-leak_size[1])
+    leak2 = signatures[1]["leak"] << (256-leak_size[1])
+    u_new = leak1 + t*leak2 + u
+    l = 256 - leak_beginning
+
+    R.<x1,y1,x2,y2> = ZZ[]
+    
+    def getf(M,i):
+        return M[i,0]/X*x1+M[i,1]/X*y1+M[i,2]/X*x2+M[i,3]/X*y2+M[i,4]
+
+    I = ideal(getf(B,i) for i in range(4))
+    groebner_basis = I.groebner_basis()
+    print(groebner_basis)
+    # Extract the constant values from each polynomial in the Groebner basis
+    values = [-poly.constant_coefficient() for poly in groebner_basis]    
+    x1 = values[0]
+    y1 = values[1]
+    x2 = values[2]
+    y2 = values[3]
+
+    assert(Zn(x1 + 2^l*y1 + t*x2 + t*2^l*y2 + u_new) == 0)
+
+    k1 = y1*(2^l) + leak1 + x1
+    k2 = y2*(2^l) + leak2 + x2
+    print("k1: ", hex(k1))
+    print("k2: ", hex(k2))
+
+    priv_key1 = Zn(inverse_mod(r1, n)*(s1*k1 - h1))
+    priv_key2 = Zn(inverse_mod(r2, n)*(s2*k2 - h2))
+
+    assert(priv_key1 == priv_key2)
+    return int(priv_key1)
+
+
+def solve_system_for_middle_bits(B, signatures, leak_size, n, G, X):
     Zn = Zmod(n)
     r1, s1 = signatures[0]["r"], signatures[0]["s"]
     r2, s2 = signatures[1]["r"], signatures[1]["s"]
@@ -203,6 +246,7 @@ def solve_system(B, signatures, leak_size, n, G):
     x -> LSB recovered
     y -> MSB recovered
     """
+
     x1, y1, x2, y2 = eq_system.solve_right(vector(ZZ, b))
     assert(Zn(x1 + 2^l*y1 + t*x2 + t*2^l*y2 + u_new) == 0)
 
@@ -336,14 +380,18 @@ def attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs):
 
     if(type == "Middle"):
         reduced = reduce_lattice(B, None)
-        try:
-            found = solve_system(reduced, signatures, leak_size, n, G)
+        K = 2^(max(leak_size[0], 256-leak_size[1]))
+        #try:
+        found = solve_system_for_middle_bits(reduced, signatures, leak_size, n, G, K)
+        if found:
             print("private key recovered: ", hex(found))
             r, s = ecdsa_sign("I find your lack of faith disturbing", found, G)
             assert(ecdsa_verify(r, s, "I find your lack of faith disturbing", G, found, Q))
             print("SUCCESS")
-        except:
-            print("System has no solution\nFAILED")
+        else:
+            print("FAILED") 
+        #except:
+        #    print("System has no solution\nFAILED")
     else:  # LSB or MSB
         block_sizes = [None, 15, 20, 25, 30, 40, 50, 60, num_signatures]
         for block_size in block_sizes:
@@ -363,7 +411,7 @@ def attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs):
         block_sizes = [None, 15, 20, 25, 30, 40, 50, 60, num_signatures]
         for block_size in block_sizes:
             reduced = reduce_lattice(B, block_size)
-            found = msb_experimental(reduced, Q, n, G, signatures, leak_size)
+    found = msb_experimental                                    (reduced, Q, n, G, signatures, leak_size)
             if found :
                 print("private key recovered: ", hex(found))
                 r, s = ecdsa_sign("I find your lack of faith disturbing", found, G)
@@ -373,6 +421,54 @@ def attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs):
             else:
                 print("FAILED")
     """
+
+def ecdsa_middle_bits():
+    p,F,C,n,G,x = ecdsa_params()
+    
+    h1 = 0x608932fcfaa7785d
+    h2 = 0xe5f8eca48ac2a45c
+
+    k1 = 0x734450e2fd5da41c
+    sig1 = '1a4adeb76b4a90e0 eba129bb2f97f7cd'
+    r1,s1 = [Integer(f,16) for f in sig1.split()]
+    k2 = 0x4de972930ab4a534
+    sig2 = 'c4e5bec792193b51 0202d6eecb712ae3'
+    r2,s2 = [Integer(f,16) for f in sig2.split()]
+
+    a1 = lift(mod(k1,2^(64-15)))-lift(mod(k1,2^15))
+    a2 = lift(mod(k2,2^(64-15)))-lift(mod(k2,2^15))
+
+    print("a1=",hex(a1))
+    print("a2=",hex(a2))
+    
+    b1 = lift(mod(k1,2^15))
+    b2 = lift(mod(k2,2^15))
+    
+    c1 = 2^(-64+15)*(k1 - lift(mod(k1,2^(64-15))))
+    c2 = 2^(-64+15)*(k2 - lift(mod(k2,2^(64-15))))
+
+    t = Integer(r1*inverse_mod(s1,n)*inverse_mod(r2,n)*s2)
+    u = Integer(-inverse_mod(s1,n)*h1+r1*inverse_mod(s1,n)*inverse_mod(r2,n)*h2)
+
+    print(mod(b1+c1*2^(64-15)-t*b2-t*c2*2^(64-15)+a1-t*a2+u,n))
+
+    M = matrix(5)
+    X = 2^15
+    M[0] = [X, X*2^(64-15), -X*t, -X*t*2^(64-15), a1-t*a2+u]
+    M[1,1] = n*X
+    M[2,2] = n*X
+    M[3,3] = n*X
+    M[4,4] = n
+
+    A = M.LLL()
+    
+    R.<x1,y1,x2,y2> = ZZ[]
+    
+    def getf(M,i):
+        return M[i,0]/X*x1+M[i,1]/X*y1+M[i,2]/X*x2+M[i,3]/X*y2+M[i,4]
+
+    I = ideal(getf(A,i) for i in range(4))
+    return I.groebner_basis()
 
 if __name__ == "__main__":
     print("ECDSA Lattice attacks playground")
