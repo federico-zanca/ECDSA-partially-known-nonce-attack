@@ -2,7 +2,7 @@
 
 ## Overview
 
-This repository contains a Python SageMath script that implements a lattice attack on the ECDSA (Elliptic Curve Digital Signature Algorithm) based on the principles described in Section 5.2 of the paper "[Survey: Recovering cryptographic keys from partial information](https://cic.iacr.org/p/1/1/28/pdf)." The attack allows reconstructing the entire nonce used in ECDSA signatures by exploiting a partial leak of its bits, which can lead to the recovery of the private key.
+This repository contains a SageMath script that implements a lattice attack on the ECDSA (Elliptic Curve Digital Signature Algorithm) based on the principles described in Section 5.2 of the paper "[Survey: Recovering cryptographic keys from partial information](https://cic.iacr.org/p/1/1/28/pdf)." The attack allows reconstructing the entire nonce used in ECDSA signatures by exploiting a partial leak of its bits, which can lead to the recovery of the private key.
 
 ### Contents
 
