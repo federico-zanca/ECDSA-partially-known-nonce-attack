@@ -52,7 +52,7 @@ Running it with `--load` will recover such data from a json file, that was previ
 ## Limits of the attack
 
 ## References
-The following papers were studied and used as references to implement the ECDSA partially known nonce attack:
+The following papers were studied and used as references to implement the ECDSA lattice attack:
 1. [Survey: Recovering cryptographic keys from partial information](https://cic.iacr.org/p/1/1/28/pdf)
 2. [Biased Nonce Sense: Lattice Attacks against Weak ECDSA Signatures in Cryptocurrencies](https://eprint.iacr.org/2019/023.pdf)
 3. [Return of the Hidden Number Problem](https://tches.iacr.org/index.php/TCHES/article/download/7337/6509/)
