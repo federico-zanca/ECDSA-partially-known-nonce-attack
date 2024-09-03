@@ -9,7 +9,7 @@ This repository contains a Python SageMath script that implements a lattice atta
 - **`attack.sage`**: A SageMath script that performs the lattice-based attack on ECDSA, allowing you to test different scenarios where partial information about the nonce is leaked.
   
 - **CTF folder**: Contains an example of a Capture The Flag (CTF) challenge based on ECDSA attacks:
-  - **`challenge.sage`**: The challenge script.
+  - **`vuln.sage`**: The challenge script.
   - **`exploit.sage`**: The exploit script to solve the challenge. The exploit script requires `pwntools` to run.
 
 - **Presentation**: A PowerPoint presentation explaining the attack, the math behind it, and how the script works.
@@ -22,7 +22,7 @@ To run the attack and the CTF scripts, the following software needs to be instal
 - **Python 3.x**: Required for executing the script, along with the following Python libraries:
   - `Crypto` (from PyCryptodome): For hashing functions.
   - `json`: For loading and saving signatures, keys, and other data.
-- **Pwntools**: Required to run the exploit in the CTF challenge. Install it using `pip install pwntools`.
+- **Pwntools** (optional): Required to run the exploit in the CTF challenge. Install it using `pip install pwntools`.
 
 ## Usage
 
