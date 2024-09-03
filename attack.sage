@@ -9,9 +9,8 @@ def ecdsa_init():
     E = EllipticCurve(GF(p), [0, 7])
     G = E.gens()[0] # generator
     n = G.order() # order of G
-    d = randrange(n)  # private key
-    Q = d * G # public key
-    return p,GF(p),E,n,G,d,Q
+   
+    return p,GF(p),E,n,G
 
 def ecdsa_verify(r, s, m, G, d, Q):
     Zn = Zmod(G.order())
@@ -58,7 +57,7 @@ def generate_signatures(G, d, num_signatures, type, m, leak_size, Q):
         for i in range(2):
             r,s,k = leaky_ecdsa_sign(m, d, G)
             leak = (k >> (256-leak_end)) % (2^(leak_end - leak_beginning))
-            signatures.append({"r": r,"s": s, "k": k, "leak": leak, "h": h})
+            signatures.append({"r": int(r),"s": int(s), "k": int(k), "leak": int(leak), "h": int(h)})
     else:
         for i in range(num_signatures):
             r,s,k = leaky_ecdsa_sign(m, d, G)
@@ -66,7 +65,7 @@ def generate_signatures(G, d, num_signatures, type, m, leak_size, Q):
                 leak = k >> (256 - leak_size)
             else:  # LSB
                 leak = k % (2^leak_size)
-            signatures.append({"r": r,"s": s, "k": k, "leak": leak, "h": h})
+            signatures.append({"r": int(r),"s": int(s), "k": int(k), "leak": int(leak), "h": int(h)})
     return signatures
 
 def construct_lattice(sigs, n, leak_size, type):
@@ -132,9 +131,9 @@ def construct_lattice(sigs, n, leak_size, type):
 
 def reduce_lattice(B, block_size):
     if block_size is None:
-        print("Using LLL")
+        print("Running LLL")
         return B.LLL()
-    print("BKZ with block size {}".format(block_size))
+    print("Running BKZ with block size {}".format(block_size))
     return B.BKZ(block_size=block_size,  auto_abort = True)
 
 def get_key_msb_lsb(B, Q, n, G):
@@ -195,20 +194,23 @@ def solve_system(B, signatures, leak_size, n, G):
     return int(priv_key1)
 
 
-def set_parameters():
+def choose_atk_params():
     while(True):
         print("Choose what you want to be leaked")
         print("1. MSB")
         print("2. LSB")
         print("3. Middle bits")
-        choice = int(input("> "))
-        if choice == 1:
+        print("Q. Quit")
+        choice = input("> ")
+        if choice == 'Q' or choice == 'q':
+            exit()
+        if int(choice) == 1:
             type = "MSB"
             break
-        elif choice == 2:
+        elif int(choice) == 2:
             type = "LSB"
             break
-        elif choice == 3:
+        elif int(choice) == 3:
             type = "Middle"
             break
         else:
@@ -232,44 +234,69 @@ def set_parameters():
                 break
     return type, leak_size
 
-def attack():
-    p, F ,E, n, G, d, Q = ecdsa_init()
-    priv_key = d
-    print("Elliptic curve SECP256K1")
-    print("Order of G n = {}".format(hex(n)))
-    print("Private Key d = {}".format(hex(d)))
+def attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs):
+    p, F ,E, n, G = ecdsa_init()
+    
+    print("\nElliptic curve SECP256K1")
+    print("Order of G n = {}\n".format(hex(n)))
 
+    message = "Do electric sheep dream of androids?"
+    
+    if(data is not None): # Load signatures and keys from file if --load
+        Q = E(data.get("public_key"))
+        signatures = data.get("signatures")
+        num_signatures = len(signatures)
+        d = data.get("private_key") 
+        print("Loaded {} signatures".format(num_signatures))
+    else: # Generate new signatures and keys
+        d = randrange(n)
+        Q = d * G
+
+        if(type == "Middle"):
+            num_signatures = 2
+            assert(isinstance(leak_size, list))
+            assert(leak_size[1]<=256 and leak_size[0] >= 0)  
+            assert(leak_size[0] < leak_size[1])
+        else:
+            num_signatures = int(1.3 * (4/3) * (256/leak_size))
+            num_signatures = int(2 * (256/leak_size))
+
+        signatures = generate_signatures(G, d, num_signatures, type, message, leak_size, Q)
+        print("Generated {} signatures".format(num_signatures))
+
+    assert(len(signatures) == num_signatures) # sanity check
     assert(E.is_on_curve(Q[0],Q[1])) # sanity check
     assert(G.order() == n) # sanity check
-    assert (d*G == Q) # sanity check
-    message = "Do electric sheep dream of androids?"
 
-    type = "Middle"
-    leak_size = [60,204]
+    # Print signatures if --showsigs
+    if(show_sigs):
+        print("\nSignatures:")
+        for i in range(num_signatures):
+            print(f"{i}: r = {hex(signatures[i]['r'])}, s = {hex(signatures[i]['s'])}, k = {hex(signatures[i]['k'])}, leak = {signatures[i]['leak']}")
 
-    type, leak_size = set_parameters()
+    # Print keys
+    print("\nPublic Key Q = {}".format(hex(Q.xy()[0]), hex(Q.xy()[1])))
+    print("Private Key d = {}\n".format(hex(d)))
+    
+    # Dump signatures, keys, leak size and type of leak to a file for later use if --dump
+    if(dumpsigs): 
+        with open("signatures.json", "w") as f:
+            json.dump({"signatures": signatures, "private_key": d, "leak_size": leak_size, "type": type, "public_key": [int(Q.xy()[0]), int(Q.xy()[1])]}, f)
 
-    if(type == "Middle"):
-        num_signatures = 2
-        assert(isinstance(leak_size, list))
-        assert(leak_size[1]<=256 and leak_size[0] >= 0)  
-        assert(leak_size[0] < leak_size[1])
-        K = 2^(max(leak_size[0], 256-leak_size[1]))
-    else:
-        num_signatures = int(1.3 * (4/3) * (256/leak_size))
-        num_signatures = int(2 * (256/leak_size))
-        #num_signatures = int(4/3 * 256/leak_size) 
-        K = None
-    #num_signatures = int(2 * (4/3) * (256/leak_size))
-    signatures = generate_signatures(G, d, num_signatures, type, message, leak_size, Q)
-
-    print("LEAK_SIZE = ",leak_size)
-    #print(signatures)
-
-    print(f"{leak_size} {type} of every signature's nonce are leaked")
-    print("Generated {} signatures".format(num_signatures))
+    #print("LEAK_SIZE = ",leak_size)
+    print(f"\n{leak_size} {type} of every signature's nonce are leaked\n")
   
     B = construct_lattice(signatures, n, leak_size, type)
+
+    # Print lattice if --showlattice
+    if(show_lattice):
+        print("\nConstructed lattice:")
+        for row in B:
+            print("[", end=" ")
+            for elem in row:
+                print(hex(elem), end=" ")
+            print("]")
+
     if(type == "Middle"):
         reduced = reduce_lattice(B, None)
         if type == "Middle":
@@ -281,12 +308,10 @@ def attack():
                 print("SUCCESS")
             except:
                 print("System has no solution\nFAILED")
-
-    else:
+    else:  # LSB or MSB
         block_sizes = [None, 15, 20, 25, 30, 40, 50, 60, num_signatures]
         for block_size in block_sizes:
             reduced = reduce_lattice(B, block_size)
-            # LSB or MSB
             found = get_key_msb_lsb(reduced, Q, n, G)
 
             if found :
@@ -297,5 +322,47 @@ def attack():
                 break
             else:
                 print("FAILED")
-attack()                            
+
+if __name__ == "__main__":
+    print("ECDSA Lattice attacks playground")
+    dumpsigs = False
+    data = None
+    loadsigs = False
+    show_sigs = False
+    show_lattice = False
     
+    if("--help" in sys.argv):
+        print("Usage: sage attack.sage [--options]")
+        print("Options:")
+        print("--load: Load data (signatures, keys, message) from signatures.json")
+        print()
+        print("--dump: Dump data (signatures, keys, message) to signatures.json")
+        print("--showsigs: Print signatures")
+        print("--showlattice: Print constructed lattice")
+        print("--help: Display this message")
+    if("--load" in sys.argv):
+        print("Signatures will be loaded from signatures.json")
+        loadsigs = True
+        with open("signatures.json", "r") as f:
+            
+            data = json.load(f)
+        type = data.get("type")
+        leak_size = data.get("leak_size")
+        
+    elif("--dump" in sys.argv):
+        dumpsigs = True
+        print("Signatures will be dumped to signatures.json")
+    if("--showsigs" in sys.argv):
+        show_sigs = True
+    if("--showlattice" in sys.argv):
+        show_lattice = True
+
+    if(not loadsigs):
+        type, leak_size = choose_atk_params()
+    else:
+        type = data.get("type")
+        leak_size = data.get("leak_size")
+    attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs) 
+    print("\n\n\n")        
+        
+
