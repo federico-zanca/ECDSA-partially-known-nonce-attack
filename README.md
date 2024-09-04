@@ -47,9 +47,15 @@ sage attack.sage
 
 Running it with `--load` will recover such data from a json file, that was previously produced running the same script with the `--dump` flag.
 
-## How the attack works
-
-## Limits of the attack
+## Limits
+### BKZ Block size reduction  
+The attacks implemented rely on lattice reduction algorithms: by default the attack starts reducing the lattice basis using LLL, and if it fails to recover the key it uses BKZ gradually increasing the block size used for block reduction.
+These algorithms may require a lot of computational power if the dimensions of the basis are large enough or with a large block size factor for BKZ, so computation might take a very long time to terminate. 
+The smaller the leak, the bigger will be the block size used by BKZ to recover the key.
+On AMD Ryzen 7 4800H leaks of 3 bits require a block size >= 50 and it takes hours to recover the key.
+Anything above 3 bits is instead solved in less than a minute.
+### Middle bits leak
+Due to the nature of the attack with middle bits leakage (which is different from MSB and LSB in the lattice construction), some ranges (initial position - final position of the bits leaked) perform better than others, meaning that in some cases the solution to the system of equations obtained after running LLL does not exist.
 
 ## References
 The following papers were studied and used as references to implement the ECDSA lattice attack:
