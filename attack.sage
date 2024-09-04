@@ -1,16 +1,35 @@
 #!/usr/bin/sage
 from sage.all import *
-from Crypto.Hash import SHA256
+from Crypto.Hash import SHA256  
 import json
+curves = {
+        "secp256k1": EllipticCurve(GF(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F), [0, 7]),
+        "secp256r1": EllipticCurve(GF(0xFFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF), [0xFFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFC, 0x5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B]),
+        "secp192k1": EllipticCurve(GF(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFEE37), [0, 3]),
+        "secp224k1": EllipticCurve(GF(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFE56D), [0, 5]), 
+    }
 
-def ecdsa_init():
-    # Elliptic curve SECP256K1
-    p = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
-    E = EllipticCurve(GF(p), [0, 7])
+def choose_curve():
+    print("Choose an elliptic curve:")
+    for i, name in enumerate(curves.keys()):
+        print(f"{i + 1}. {name}")
+    
+    choice = int(input("> ")) - 1
+    curve_name = list(curves.keys())[choice]
+    print(f"Selected curve: {curve_name}")
+    return curve_name
+    
+
+def ecdsa_init(curve_name):
+    N = int(curve_name[4:7])
+    E = curves[curve_name]
+    return E, N
+
+def ec_get_info(E):
     G = E.gens()[0] # generator
     n = G.order() # order of G
-   
-    return p,GF(p),E,n,G
+    p = E.base_ring().order() # characteristic of the field
+    return p, E.base_ring(), E, n, G
 
 def ecdsa_verify(r, s, m, G, d, Q):
     Zn = Zmod(G.order())
@@ -56,25 +75,25 @@ def generate_signatures(G, d, num_signatures, type, m, leak_size, Q):
         leak_end = leak_size[1]
         for i in range(2):
             r,s,k = leaky_ecdsa_sign(m, d, G)
-            leak = (k >> (256-leak_end)) % (2^(leak_end - leak_beginning))
+            leak = (k >> (N-leak_end)) % (2^(leak_end - leak_beginning))
             signatures.append({"r": int(r),"s": int(s), "k": int(k), "leak": int(leak), "h": int(h)})
     else:
         for i in range(num_signatures):
             r,s,k = leaky_ecdsa_sign(m, d, G)
             if type == 'MSB':
-                leak = k >> (256 - leak_size)
+                leak = k >> (N - leak_size)
             else:  # LSB
                 leak = k % (2^leak_size)
             signatures.append({"r": int(r),"s": int(s), "k": int(k), "leak": int(leak), "h": int(h)})
     return signatures
 
-def construct_lattice(sigs, n, leak_size, type):
+def construct_lattice(sigs, n, leak_size, type, N):
     m = len(sigs)
     Zn = Zmod(n)
-    """
+    
     if type == 'MSB':
         factor = 2^(leak_size+1)
-        shifter = 2^(256-leak_size)
+        shifter = 2^(N-leak_size)
         B = matrix(ZZ, m+2, m+2)
         for i in range(m):
             r = Zn(sigs[i]["r"])
@@ -87,29 +106,29 @@ def construct_lattice(sigs, n, leak_size, type):
             B[m+1, i] = factor*(leak*shifter - h*s_inv) + n
         B[m, m] = 1
         B[m+1, m+1] = n
-    """
-    if type == "MSB":
-        shifter = 2^(256-leak_size)
-        rm = Zn(sigs[m-1]["r"])
-        rm_inv = inverse_mod(int(rm), n)
-        sm = Zn(sigs[m-1]["s"])
-        sm_inv = inverse_mod(int(sm), n)
-        leak_m = sigs[m-1]["leak"]
-        hm = sigs[m-1]["h"]
-        B = matrix(ZZ, m+1, m+1)
-        for i in range(m):
-            r = Zn(sigs[i]["r"])
-            s_inv = inverse_mod(sigs[i]["s"], n)
-            h = sigs[i]["h"]
-            leak = sigs[i]["leak"]
-            t = int(-s_inv*sm*r*rm_inv)
-            u = int(s_inv*r*hm*rm_inv - s_inv*h)
-            B[i ,i] = n 
-            B[m-1, i] = t
-            B[m, i] = u + t*(shifter*leak_m) + shifter*                               leak
-        B[m-1, m-1] = 1
-        B[m, m] = n
-        
+        """
+        if type == "MSB":
+            shifter = 2^(256-leak_size)
+            rm = Zn(sigs[m-1]["r"])
+            rm_inv = inverse_mod(int(rm), n)
+            sm = Zn(sigs[m-1]["s"])
+            sm_inv = inverse_mod(int(sm), n)
+            leak_m = sigs[m-1]["leak"]
+            hm = sigs[m-1]["h"]
+            B = matrix(ZZ, m+1, m+1)
+            for i in range(m):
+                r = Zn(sigs[i]["r"])
+                s_inv = inverse_mod(sigs[i]["s"], n)
+                h = sigs[i]["h"]
+                leak = sigs[i]["leak"]
+                t = int(-s_inv*sm*r*rm_inv)
+                u = int(s_inv*r*hm*rm_inv - s_inv*h)
+                B[i ,i] = n 
+                B[m-1, i] = t
+                B[m, i] = u + t*(shifter*leak_m) + shifter*                               leak
+            B[m-1, m-1] = 1
+            B[m, m] = n
+        """   
     elif type == "LSB":  # LSB
         factor = 2^(leak_size+1)
         B = matrix(ZZ, m+2, m+2)
@@ -131,12 +150,12 @@ def construct_lattice(sigs, n, leak_size, type):
         s2 = int(sigs[1]["s"])
         h1 = sigs[0]["h"]
         h2 = sigs[1]["h"]
-        leak1 = sigs[0]["leak"] << (256-leak_size[1])
-        leak2 = sigs[1]["leak"] << (256-leak_size[1])
+        leak1 = sigs[0]["leak"] << (N-leak_size[1])
+        leak2 = sigs[1]["leak"] << (N-leak_size[1])
         leak_beginning = leak_size[0]
         leak_end = leak_size[1]
-        l = 256 - leak_beginning
-        K = 2^(max(leak_beginning, 256-leak_end))
+        l = N - leak_beginning
+        K = 2^(max(leak_beginning, N-leak_end))
 
         t = -int(inverse_mod(s1, n)*s2*r1*inverse_mod(r2, n))
         u = int(inverse_mod(s1, n)*r1*h2*inverse_mod(r2, n) - inverse_mod(s1, n)*h1)
@@ -172,7 +191,7 @@ def get_key_msb_lsb(B, Q, n, G):
                 return Zn(-potential_key)   
     return 0
 
-def alternative_system_solver_middle_bits(B, signatures, leak_size, n, G, X): # Not better than the other implementation
+def alternative_system_solver_middle_bits(B, signatures, leak_size, n, G, X, N): # Not better than the other implementation
     #print(B)
     r1, s1, h1 = signatures[0]["r"], signatures[0]["s"], signatures[0]["h"]
     r2, s2, h2 = signatures[1]["r"], signatures[1]["s"], signatures[1]["h"]
@@ -182,10 +201,10 @@ def alternative_system_solver_middle_bits(B, signatures, leak_size, n, G, X): # 
     leak_end = leak_size[1]
     t = -inverse_mod(s1, n)*s2*r1*inverse_mod(r2, n)
     u = inverse_mod(s1, n)*r1*h2*inverse_mod(r2, n) - inverse_mod(s1, n)*h1
-    leak1 = signatures[0]["leak"] << (256-leak_size[1])
-    leak2 = signatures[1]["leak"] << (256-leak_size[1])
+    leak1 = signatures[0]["leak"] << (N-leak_size[1])
+    leak2 = signatures[1]["leak"] << (N-leak_size[1])
     u_new = leak1 + t*leak2 + u
-    l = 256 - leak_beginning
+    l = N - leak_beginning
 
     R.<x1,y1,x2,y2> = ZZ[]
     
@@ -216,7 +235,7 @@ def alternative_system_solver_middle_bits(B, signatures, leak_size, n, G, X): # 
     return int(priv_key1)
 
 
-def solve_system_for_middle_bits(B, signatures, leak_size, n, G, X):
+def solve_system_for_middle_bits(B, signatures, leak_size, n, G, X, N):
     Zn = Zmod(n)
     r1, s1 = signatures[0]["r"], signatures[0]["s"]
     r2, s2 = signatures[1]["r"], signatures[1]["s"]
@@ -224,10 +243,10 @@ def solve_system_for_middle_bits(B, signatures, leak_size, n, G, X):
 
     leak_beginning = leak_size[0]
     leak_end = leak_size[1]
-    leak1 = signatures[0]["leak"] << (256-leak_size[1])
-    leak2 = signatures[1]["leak"] << (256-leak_size[1])
-    l = 256 - leak_beginning
-    K = 2^(max(leak_beginning, 256-leak_end))
+    leak1 = signatures[0]["leak"] << (N-leak_size[1])
+    leak2 = signatures[1]["leak"] << (N-leak_size[1])
+    l = N - leak_beginning
+    K = 2^(max(leak_beginning, N-leak_end))
     
     t = -inverse_mod(s1, n)*s2*r1*inverse_mod(r2, n)
     u = inverse_mod(s1, n)*r1*h2*inverse_mod(r2, n) - inverse_mod(s1, n)*h1
@@ -262,7 +281,7 @@ def solve_system_for_middle_bits(B, signatures, leak_size, n, G, X):
     return int(priv_key1)
 
 
-def choose_atk_params():
+def choose_atk_params(N):
     while(True):
         print("Choose what you want to be leaked")
         print("1. MSB")
@@ -284,41 +303,39 @@ def choose_atk_params():
         else:
             print("Invalid choice")
         
-    print("Enter the size of the leak for the signatures\nNotice that it is strongly recommended to leak at least 128 bits for this attack to work")
     if type == "Middle":
-        print("Beginning of the leak (0-255)")
+        print(f"Beginning of the leak (0-{N-1})")
         leak_beginning = int(input("> "))
-        print(f"End of the leak ({leak_beginning}-255)")
+        print(f"End of the leak ({leak_beginning}-{N-1})")
         leak_end = int(input("> "))
         leak_size = [leak_beginning, leak_end]
     else:
         while(True):
             leak_size = int(input(f"Number of {type} to be leaked\n> "))
-            if(leak_size <= 3):
-                print("Leak size too small, the attack won't work")
-            elif(leak_size >= 256):
+            
+            if(leak_size >= N):
                 print("Seriously?")
             else:   
                 break
     return type, leak_size
 
-def msb_experimental(B, Q, n, G, signatures, leak_size):
+def msb_experimental(B, Q, n, G, signatures, leak_size, N):
     Zn = Zmod(n)
     for i in range(len(signatures)):
         s = int(signatures[i]["s"])
         r = int(signatures[i]["r"])
         h = int(signatures[i]["h"])
-        k = abs(B[-1][i]) + signatures[i]["leak"]*(2^(256-leak_size))
+        k = abs(B[-1][i]) + signatures[i]["leak"]*(2^(N-leak_size))
         if(int(k)==int(signatures[i]["k"])):
             return int(Zn((s*k-h)*inverse_mod(r, n)))                 
     return 0
     
     
 
-def attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs):
-    p, F ,E, n, G = ecdsa_init()
+def attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs, E, N, curve_name):
+    p, F ,E, n, G = ec_get_info(E)
     
-    print("\nElliptic curve SECP256K1")
+    print(f"\nElliptic curve {curve_name}")
     print("Order of G n = {}\n".format(hex(n)))
 
     message = "Do electric sheep dream of androids?"
@@ -336,11 +353,11 @@ def attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs):
         if(type == "Middle"):
             num_signatures = 2
             assert(isinstance(leak_size, list))
-            assert(leak_size[1]<=256 and leak_size[0] >= 0)  
+            assert(leak_size[1]<=N and leak_size[0] >= 0)  
             assert(leak_size[0] < leak_size[1])
         else:
-            num_signatures = int(1.3 * (4/3) * (256/leak_size))
-            num_signatures = int(2 * (256/leak_size))
+            num_signatures = int(1.3 * (4/3) * (N/leak_size))
+            num_signatures = int(2 * (N/leak_size))
 
         signatures = generate_signatures(G, d, num_signatures, type, message, leak_size, Q)
         print("Generated {} signatures".format(num_signatures))
@@ -362,12 +379,12 @@ def attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs):
     # Dump signatures, keys, leak size and type of leak to a file for later use if --dump
     if(dumpsigs): 
         with open("signatures.json", "w") as f:
-            json.dump({"signatures": signatures, "private_key": d, "leak_size": leak_size, "type": type, "public_key": [int(Q.xy()[0]), int(Q.xy()[1])]}, f)
+            json.dump({"signatures": signatures, "private_key": d, "leak_size": leak_size, "type": type, "public_key": [int(Q.xy()[0]), int(Q.xy()[1])], "curve_name": curve_name}, f)
 
     #print("LEAK_SIZE = ",leak_size)
     print(f"\n{leak_size} {type} of every signature's nonce are leaked\n")
   
-    B = construct_lattice(signatures, n, leak_size, type)
+    B = construct_lattice(signatures, n, leak_size, type, N)
 
     # Print lattice if --showlattice
     if(show_lattice):
@@ -380,9 +397,9 @@ def attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs):
 
     if(type == "Middle"):
         reduced = reduce_lattice(B, None)
-        K = 2^(max(leak_size[0], 256-leak_size[1]))
+        K = 2^(max(leak_size[0], N-leak_size[1]))
         #try:
-        found = solve_system_for_middle_bits(reduced, signatures, leak_size, n, G, K)
+        found = solve_system_for_middle_bits(reduced, signatures, leak_size, n, G, K, N)
         if found:
             print("private key recovered: ", hex(found))
             r, s = ecdsa_sign("I find your lack of faith disturbing", found, G)
@@ -411,7 +428,7 @@ def attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs):
         block_sizes = [None, 15, 20, 25, 30, 40, 50, 60, num_signatures]
         for block_size in block_sizes:
             reduced = reduce_lattice(B, block_size)
-    found = msb_experimental                                    (reduced, Q, n, G, signatures, leak_size)
+            found = msb_experimental(reduced, Q, n, G, signatures, leak_size, N)
             if found :
                 print("private key recovered: ", hex(found))
                 r, s = ecdsa_sign("I find your lack of faith disturbing", found, G)
@@ -422,54 +439,6 @@ def attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs):
                 print("FAILED")
     """
 
-def ecdsa_middle_bits():
-    p,F,C,n,G,x = ecdsa_params()
-    
-    h1 = 0x608932fcfaa7785d
-    h2 = 0xe5f8eca48ac2a45c
-
-    k1 = 0x734450e2fd5da41c
-    sig1 = '1a4adeb76b4a90e0 eba129bb2f97f7cd'
-    r1,s1 = [Integer(f,16) for f in sig1.split()]
-    k2 = 0x4de972930ab4a534
-    sig2 = 'c4e5bec792193b51 0202d6eecb712ae3'
-    r2,s2 = [Integer(f,16) for f in sig2.split()]
-
-    a1 = lift(mod(k1,2^(64-15)))-lift(mod(k1,2^15))
-    a2 = lift(mod(k2,2^(64-15)))-lift(mod(k2,2^15))
-
-    print("a1=",hex(a1))
-    print("a2=",hex(a2))
-    
-    b1 = lift(mod(k1,2^15))
-    b2 = lift(mod(k2,2^15))
-    
-    c1 = 2^(-64+15)*(k1 - lift(mod(k1,2^(64-15))))
-    c2 = 2^(-64+15)*(k2 - lift(mod(k2,2^(64-15))))
-
-    t = Integer(r1*inverse_mod(s1,n)*inverse_mod(r2,n)*s2)
-    u = Integer(-inverse_mod(s1,n)*h1+r1*inverse_mod(s1,n)*inverse_mod(r2,n)*h2)
-
-    print(mod(b1+c1*2^(64-15)-t*b2-t*c2*2^(64-15)+a1-t*a2+u,n))
-
-    M = matrix(5)
-    X = 2^15
-    M[0] = [X, X*2^(64-15), -X*t, -X*t*2^(64-15), a1-t*a2+u]
-    M[1,1] = n*X
-    M[2,2] = n*X
-    M[3,3] = n*X
-    M[4,4] = n
-
-    A = M.LLL()
-    
-    R.<x1,y1,x2,y2> = ZZ[]
-    
-    def getf(M,i):
-        return M[i,0]/X*x1+M[i,1]/X*y1+M[i,2]/X*x2+M[i,3]/X*y2+M[i,4]
-
-    I = ideal(getf(A,i) for i in range(4))
-    return I.groebner_basis()
-
 if __name__ == "__main__":
     print("ECDSA Lattice attacks playground")
     dumpsigs = False
@@ -477,7 +446,7 @@ if __name__ == "__main__":
     loadsigs = False
     show_sigs = False
     show_lattice = False
-    
+    curve = None
     if("--help" in sys.argv):
         print("Usage: sage attack.sage [--options]")
         print("Options:")
@@ -496,7 +465,8 @@ if __name__ == "__main__":
         type = data.get("type")
         leak_size = data.get("leak_size")
         
-    elif("--dump" in sys.argv):
+        
+    if("--dump" in sys.argv):
         dumpsigs = True
         print("Signatures will be dumped to signatures.json")
     if("--showsigs" in sys.argv):
@@ -505,11 +475,16 @@ if __name__ == "__main__":
         show_lattice = True
 
     if(not loadsigs):
-        type, leak_size = choose_atk_params()
+        curve = {}
+        curve_name = choose_curve()
+        E, N = ecdsa_init(curve_name)
+        type, leak_size = choose_atk_params(N)
     else:
         type = data.get("type")
         leak_size = data.get("leak_size")
-    attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs) 
+        curve_name = data.get("curve_name")
+        E, N = ecdsa_init(data.get("curve_name"))
+    attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs, E, N, curve_name) 
     print("\n\n\n")        
         
 
