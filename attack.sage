@@ -398,17 +398,17 @@ def attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs, E, N, curve
     if(type == "Middle"):
         reduced = reduce_lattice(B, None)
         K = 2^(max(leak_size[0], N-leak_size[1]))
-        #try:
-        found = solve_system_for_middle_bits(reduced, signatures, leak_size, n, G, K, N)
-        if found:
-            print("private key recovered: ", hex(found))
-            r, s = ecdsa_sign("I find your lack of faith disturbing", found, G)
-            assert(ecdsa_verify(r, s, "I find your lack of faith disturbing", G, found, Q))
-            print("SUCCESS")
-        else:
-            print("FAILED") 
-        #except:
-        #    print("System has no solution\nFAILED")
+        try:
+            found = solve_system_for_middle_bits(reduced, signatures, leak_size, n, G, K, N)
+            if found:
+                print("private key recovered: ", hex(found))
+                r, s = ecdsa_sign("I find your lack of faith disturbing", found, G)
+                assert(ecdsa_verify(r, s, "I find your lack of faith disturbing", G, found, Q))
+                print("SUCCESS")
+            else:
+                print("FAILED") 
+        except:
+            print("System has no solution\nFAILED")
     else:  # LSB or MSB
         block_sizes = [None, 15, 20, 25, 30, 40, 50, 60, num_signatures]
         for block_size in block_sizes:
