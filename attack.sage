@@ -423,7 +423,7 @@ def attack(type, leak_size, dumpsigs, data, show_lattice, show_sigs, E, N, curve
                 break
             else:
                 print("FAILED")
-    """
+    """         
     elif type=="MSB":
         block_sizes = [None, 15, 20, 25, 30, 40, 50, 60, num_signatures]
         for block_size in block_sizes:
